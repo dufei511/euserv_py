@@ -369,6 +369,22 @@ auto_switch_to_direct_mode() {
     
     # 安装Python依赖
     echo "安装Python依赖库..."
+    # 检查并安装 python3-pip（Debian/Ubuntu 系）
+    if ! command -v pip3 &> /dev/null; then
+        echo "[INFO] pip3 未找到，正在安装 python3-pip..."
+        apt update -qq
+        apt install -y python3-pip python3-venv
+    fi
+
+    # 验证 pip3 路径并加到 PATH（防 /usr/local/bin/pip3 不在 PATH）
+    PIP3_PATH=$(which pip3 || echo "")
+    if [ -z "$PIP3_PATH" ]; then
+        echo "[ERROR] 安装 pip3 失败，请手动检查 apt"
+        exit 1
+    fi
+    export PATH=$PATH:/usr/local/bin:/usr/bin
+    echo 'export PATH=$PATH:/usr/local/bin:/usr/bin' >> /etc/profile.d/pip.sh  # 永久加 PATH
+
     pip3 install --quiet requests beautifulsoup4 lxml Pillow python-dotenv ddddocr imap-tools 2>/dev/null || \
     pip3 install requests beautifulsoup4 lxml Pillow python-dotenv ddddocr imap-tools
     
