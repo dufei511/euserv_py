@@ -849,6 +849,7 @@ uninstall() {
         
         # 删除安装目录
         rm -rf ${INSTALL_DIR}
+        rm -f /usr/local/bin/dj
         
         echo "卸载完成!"
         exit 0
