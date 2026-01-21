@@ -437,6 +437,7 @@ class EUserv:
                             logger.error("❌ 验证码错误次数过多，重新进入登录流程")
                             return False
                     else:
+                        soup = BeautifulSoup(response.text, "html.parser")
                         logger.info("✅ 验证码验证成功")
                         break  # 验证码正确，跳出循环
             
