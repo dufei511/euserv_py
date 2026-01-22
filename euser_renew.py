@@ -517,8 +517,8 @@ class EUserv:
 
             soup = BeautifulSoup(response.text, 'html.parser')
 
-
-            self.c_id = soup.find("input", {"name": "c_id"})["value"]
+            if not self.c_id:
+                self.c_id = soup.find("input", {"name": "c_id"})["value"]
             c_att = soup.select_one('#c_att option[selected]').get('value')
             c_street = soup.find('input', {'name': 'c_street'})['value']
             c_streetno = soup.find('input', {'name': 'c_streetno'})['value']
