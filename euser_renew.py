@@ -706,7 +706,7 @@ class EUserv:
             
             # 步骤3: 获取 PIN
             logger.debug("步骤3: 等待并获取 PIN 码...")
-            time.sleep(5)
+            time.sleep(8)
             pin = get_euserv_pin(
                 self.config.email,
                 self.config.email_password,
@@ -742,17 +742,15 @@ class EUserv:
             logger.debug(f"✅ 获取到 token: {token[:20]}...")
             time.sleep(2)
 
-            # logger.debug("步骤4.5: 确认续期图...")
-            # data = {
-            #     'sess_id': self.sess_id,
-            #     'ord_id': order_id,
-            #     'subaction': 'kc2_customer_contract_details_extend_contract_term_confirm',
-            #     'auth': token
-            # }
-            # resp4 = self.session.post(url, headers=headers, data=data)
-            # resp4.raise_for_status()
-
-
+            # 步骤4.5: 弹出小窗
+            logger.debug("步骤4.5: 确认续期图...")
+            data = {
+                'sess_id': self.sess_id,
+                'subaction': 'kc2_customer_contract_details_get_extend_contract_confirmation_dialog',
+                'token': token
+            }
+            resp4 = self.session.post(url, headers=headers, data=data)
+            resp4.raise_for_status()
 
 
             # 步骤5: 提交续期请求
@@ -761,12 +759,13 @@ class EUserv:
                 'sess_id': self.sess_id,
                 'ord_id': order_id,
                 'subaction': 'kc2_customer_contract_details_extend_contract_term',
-                'auth': token
+                'token': token
             }
       
             resp5 = self.session.post(url, headers=headers, data=data)
             resp5.raise_for_status()
-            time.sleep(3)
+            # with open('debug_resp5.html', 'w', encoding='utf-8') as f:
+            #     f.write(resp5.text)
             
             logger.info(f"✅ 服务器 {order_id} 续期成功")
             return True
