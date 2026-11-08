@@ -4,11 +4,9 @@ on:
   schedule:
     - cron: '37 12 * * *' # 北京时间 20:37（原为 20:00，仅把分钟避开整点拥堵，频率不变）
   workflow_dispatch:
-  push:
-    branches:
-      - main
-    paths-ignore:
-      - 'last_run.txt'
+
+permissions:
+  contents: write
 
 jobs:
   renew:
@@ -66,13 +64,16 @@ jobs:
           BARK_URL: ${{ secrets.BARK_URL }}
         run: python euser_renew.py
 
-# --- action保活 ---
+      # --- Action 保活（仅每月 1 号和 15 号执行空提交，避免每天产生垃圾提交，远小于 GitHub 60 天停用阈值） ---
       - name: Keep Alive Action
         if: always()
         run: |
-          date > last_run.txt
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git add last_run.txt
-          git commit -m "Keep alive: $(date)" || echo "No changes to commit"
-          git push
+          DAY=$(date +%-d)
+          if [ "$DAY" = "1" ] || [ "$DAY" = "15" ]; then
+            git config --global user.name "github-actions[bot]"
+            git config --global user.email "github-actions[bot]@users.noreply.github.com"
+            git commit --allow-empty -m "chore: keep action alive ($(date +'%Y-%m-%d'))"
+            git push
+          else
+            echo "Today is day ${DAY}, skipping keep-alive commit (runs on 1st and 15th)."
+          fi

@@ -23,8 +23,7 @@
 ### 方案 A：GitHub Actions 部署（推荐）
 
 1.  **Fork 本仓库**：点击右上角 `Fork` 按钮到你的账户下。
-2.  **开启权限**：进入 `Settings` -> `Actions` -> `General`，拉至底部勾选 **Read and write permissions** 并保存。
-3.  **配置 Secrets**：进入 `Settings` -> `Secrets and variables` -> `Actions`，点击 `New repository secret` 添加下方表格中的变量。
+2.  **配置 Secrets**：进入 `Settings` -> `Secrets and variables` -> `Actions`，点击 `New repository secret` 添加下方表格中的变量（工作流已内置 `contents: write` 权限，无需手动修改权限设置）。
 
 ### 方案 B：VPS 虚拟主机部署
 * 详情请参阅：[VPS 部署指南](./README_VPS.md)。

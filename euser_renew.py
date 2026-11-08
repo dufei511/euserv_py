@@ -655,6 +655,7 @@ class EUserv:
             if any(success_checks):
                 logger.info(f"✅ 账号 {self.config.email} 登录成功")
                 self.sess_id = sess_id
+                self._save_cookies()
                 return True
             else:
                 logger.error(f"❌ 账号 {self.config.email} 登录失败")
