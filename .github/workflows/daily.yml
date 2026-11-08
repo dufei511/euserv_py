@@ -4,6 +4,11 @@ on:
   schedule:
     - cron: '37 12 * * *' # 北京时间 20:37（原为 20:00，仅把分钟避开整点拥堵，频率不变）
   workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - 'last_run.txt'
 
 jobs:
   renew:
@@ -16,6 +21,15 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+          cache: 'pip'
+
+      - name: Restore trusted device cookies
+        uses: actions/cache@v4
+        with:
+          path: cookies
+          key: euserv-cookies-${{ github.run_id }}
+          restore-keys: |
+            euserv-cookies-
 
       - name: Install dependencies
         run: |
@@ -27,19 +41,24 @@ jobs:
           # 账号 1（必填）
           EUSERV_EMAIL: ${{ secrets.EUSERV_EMAIL }}
           EUSERV_PASSWORD: ${{ secrets.EUSERV_PASSWORD }}
+          EMAIL_PIN: ${{ secrets.EMAIL_PIN }}
           EMAIL_PASS: ${{ secrets.EMAIL_PASS }}
           # 账号 2~5（可选，不配置则自动跳过）
           EUSERV_EMAIL2: ${{ secrets.EUSERV_EMAIL2 }}
           EUSERV_PASSWORD2: ${{ secrets.EUSERV_PASSWORD2 }}
+          EMAIL_PIN2: ${{ secrets.EMAIL_PIN2 }}
           EMAIL_PASS2: ${{ secrets.EMAIL_PASS2 }}
           EUSERV_EMAIL3: ${{ secrets.EUSERV_EMAIL3 }}
           EUSERV_PASSWORD3: ${{ secrets.EUSERV_PASSWORD3 }}
+          EMAIL_PIN3: ${{ secrets.EMAIL_PIN3 }}
           EMAIL_PASS3: ${{ secrets.EMAIL_PASS3 }}
           EUSERV_EMAIL4: ${{ secrets.EUSERV_EMAIL4 }}
           EUSERV_PASSWORD4: ${{ secrets.EUSERV_PASSWORD4 }}
+          EMAIL_PIN4: ${{ secrets.EMAIL_PIN4 }}
           EMAIL_PASS4: ${{ secrets.EMAIL_PASS4 }}
           EUSERV_EMAIL5: ${{ secrets.EUSERV_EMAIL5 }}
           EUSERV_PASSWORD5: ${{ secrets.EUSERV_PASSWORD5 }}
+          EMAIL_PIN5: ${{ secrets.EMAIL_PIN5 }}
           EMAIL_PASS5: ${{ secrets.EMAIL_PASS5 }}
           # 通知（可选）
           TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
@@ -49,6 +68,7 @@ jobs:
 
 # --- action保活 ---
       - name: Keep Alive Action
+        if: always()
         run: |
           date > last_run.txt
           git config --global user.name "github-actions[bot]"

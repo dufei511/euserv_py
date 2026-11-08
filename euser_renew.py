@@ -7,7 +7,7 @@ EUserv 自动续期脚本 - 多账号多线程版本
 
 import os
 import hashlib
-
+import html
 import sys
 import io
 import re
@@ -16,7 +16,7 @@ import time
 import threading
 import logging
 from typing import Dict, List, Tuple, Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from PIL import Image
@@ -37,15 +37,11 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# 兼容新版 Pillow
-if not hasattr(Image, 'ANTIALIAS'):
-    Image.ANTIALIAS = Image.Resampling.LANCZOS
-
 # 全局 OCR 实例（线程安全）
 ocr = ddddocr.DdddOcr(beta=True, show_ad=False)
 ocr_lock = threading.Lock()
 
-USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/94.0.4606.61 Safari/537.36"
+USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
 
 
 # ============== 工具函数 ==============
@@ -214,14 +210,22 @@ def recognize_and_calculate(captcha_image_url: str, session: requests.Session) -
         response = session.get(captcha_image_url)
         img = Image.open(io.BytesIO(response.content)).convert('RGB')
 
-        # 颜色过滤（numpy 向量化：保留橙色文字，噪点变白）
+        # 颜色过滤 + 二值化 + 去边框（优先使用 numpy 向量化一步处理）
+        border = 10
+        threshold = 200
         try:
             import numpy as np
             arr = np.array(img, dtype=np.uint8)
-            mask = ~((arr[:, :, 0] > 200) & (arr[:, :, 1] > 100) & (arr[:, :, 1] < 220) & (arr[:, :, 2] < 80))
-            arr[mask] = [255, 255, 255]
-            img = Image.fromarray(arr)
-            width, height = img.size
+            # 保留橙色文字 (R>200, 100<G<220, B<80)，其余噪点置白
+            fg_mask = (arr[:, :, 0] > 200) & (arr[:, :, 1] > 100) & (arr[:, :, 1] < 220) & (arr[:, :, 2] < 80)
+            # 橙色文字灰度值 < 200，二值化后前景为 0（黑），背景为 255（白）
+            gray = np.where(fg_mask, 0, 255).astype(np.uint8)
+            # 去除四周 10px 边框
+            gray[:border, :] = 255
+            gray[-border:, :] = 255
+            gray[:, :border] = 255
+            gray[:, -border:] = 255
+            img = Image.fromarray(gray, mode='L').point(lambda x: 0 if x < threshold else 255, '1')
         except ImportError:
             # numpy 不可用时回退到逐像素处理
             pixels = img.load()
@@ -231,24 +235,7 @@ def recognize_and_calculate(captcha_image_url: str, session: requests.Session) -
                     r, g, b = pixels[x, y]
                     if not (r > 200 and 100 < g < 220 and b < 80):
                         pixels[x, y] = (255, 255, 255)
-        
-        # 转灰度 + 二值化
-        img = img.convert('L')
-        threshold = 200
-        img = img.point(lambda x: 0 if x < threshold else 255, '1')
-        
-        # 去边框（numpy 向量化直接切片置白）
-        try:
-            import numpy as np
-            border = 10
-            arr2 = np.array(img.convert('L'), dtype=np.uint8)
-            arr2[:border, :] = 255
-            arr2[-border:, :] = 255
-            arr2[:, :border] = 255
-            arr2[:, -border:] = 255
-            img = Image.fromarray(arr2).point(lambda x: 0 if x < 128 else 255, '1')
-        except ImportError:
-            border = 10
+            img = img.convert('L').point(lambda x: 0 if x < threshold else 255, '1')
             pixels = img.load()
             for x in range(width):
                 for y in range(height):
@@ -420,7 +407,8 @@ def get_euserv_pin(email: str, email_password: str, imap_server: str,
         retry_interval: 每轮间隔秒数（默认 5 秒）
         max_age_seconds: 最大 PIN 邮件时效（默认 90 秒，超过则跳过等待新邮件）
     """
-    cutoff = datetime.now() - timedelta(seconds=max_age_seconds)
+    # 统一使用 UTC 时间作为时效起点（以进入函数的时刻向前回溯 max_age_seconds）
+    cutoff_utc = datetime.now(timezone.utc) - timedelta(seconds=max_age_seconds)
     for attempt in range(1, max_retries + 1):
         try:
             if attempt > 1:
@@ -432,11 +420,17 @@ def get_euserv_pin(email: str, email_password: str, imap_server: str,
                 for msg in mailbox.fetch(AND(from_='no-reply@euserv.com', body='PIN'), limit=1, reverse=True):
                     logger.debug(f"找到邮件: {msg.subject}, 收件时间: {msg.date_str}")
 
-                    # ★ 时效性校验：跳过旧邮件，等新的 PIN 邮件
+                    # ★ 时效性校验：统一转换为 UTC 时区进行比较，跳过旧邮件
                     msg_date = msg.date
-                    if msg_date and msg_date.replace(tzinfo=None) < cutoff:
-                        logger.info(f"PIN 邮件时间 {msg_date} 超过 {max_age_seconds}s，可能为旧 PIN，等待新邮件...")
-                        continue
+                    if msg_date:
+                        msg_date_utc = (
+                            msg_date.astimezone(timezone.utc)
+                            if msg_date.tzinfo is not None
+                            else msg_date.replace(tzinfo=timezone.utc)
+                        )
+                        if msg_date_utc < cutoff_utc:
+                            logger.info(f"PIN 邮件时间 {msg_date_utc} 早于阈值 {cutoff_utc}，可能为旧 PIN，等待新邮件...")
+                            continue
 
                     match = re.search(r'PIN:\s*\n?(\d{6})', msg.text)
                     if match:
@@ -567,7 +561,7 @@ class EUserv:
             response.raise_for_status()
 
             # 解析返回页面
-            soup = BeautifulSoup(response.text, "html.parser")
+            soup = BeautifulSoup(response.text, "lxml")
 
             # 检查登录错误
             if 'Please check email address/customer ID and password' in response.text:
@@ -610,14 +604,18 @@ class EUserv:
                             logger.error("❌ 验证码错误次数过多，重新进入登录流程")
                             return False
                     else:
-                        soup = BeautifulSoup(response.text, "html.parser")
+                        soup = BeautifulSoup(response.text, "lxml")
                         logger.info("✅ 验证码验证成功")
                         break
 
             # 处理 PIN 验证
             # 若之前 Cookie 有效，服务器不会返回 PIN 页面，直接跳过这段
             if 'PIN that you receive via email' in response.text:
-                self.c_id = soup.find("input", {"name": "c_id"})["value"]
+                c_id_input = soup.find("input", {"name": "c_id"})
+                if not c_id_input or not c_id_input.get("value"):
+                    logger.error("❌ 无法从 PIN 验证页面提取 c_id")
+                    return False
+                self.c_id = c_id_input["value"]
                 logger.info("⚠️ 需要 PIN 验证（首次登录或 Cookie 已失效）")
                 time.sleep(8)  # ★ 等邮件送达
 
@@ -696,7 +694,7 @@ class EUserv:
                 response = self.session.get(url=url, headers=headers)
                 response.raise_for_status()
 
-                soup = BeautifulSoup(response.text, 'html.parser')
+                soup = BeautifulSoup(response.text, 'lxml')
 
                 # ── 工具函数 ────────────────────────────────────────────────
                 def _val(name):
@@ -733,10 +731,10 @@ class EUserv:
 
                 # ── 修复🟡：动态读取 c_ustid[]（text + select 各一个）─────────
                 c_ustid_text = [t.get('value', '') for t in soup.find_all('input', {'name': 'c_ustid[]'})]
-                c_ustid_sel  = [
-                    (s.find('option', selected=True) or {}).get('value', '')
-                    for s in soup.find_all('select', {'name': 'c_ustid[]'})
-                ]
+                c_ustid_sel = []
+                for s in soup.find_all('select', {'name': 'c_ustid[]'}):
+                    opt = s.find('option', selected=True)
+                    c_ustid_sel.append(opt.get('value', '') if opt else '')
                 c_ustid_value = c_ustid_text + c_ustid_sel  # 保持与表单顺序一致
 
                 # ── 修复🟢：c_org 动态读取，不再硬编码为空 ────────────────────
@@ -823,9 +821,10 @@ class EUserv:
 
                 if 'customer data has been changed' in response.text:
                     logger.info("✅ 保存用户信息成功")
+                    return True
                 else:
                     logger.warning(f"⚠️ 保存用户信息失败，response={response.text[:500]}")
-                return True
+                    return False
 
             except Exception as e:
                 logger.error(f"❌ 更新用户信息异常: {e}", exc_info=True)
@@ -847,7 +846,7 @@ class EUserv:
             detail_response = self.session.get(url=url, headers=headers)
             detail_response.raise_for_status()
 
-            soup = BeautifulSoup(detail_response.text, 'html.parser')
+            soup = BeautifulSoup(detail_response.text, 'lxml')
             servers = {}
 
             # 修复1: 动态匹配所有 Tab，不硬编码 ID
@@ -1104,8 +1103,8 @@ def send_notification(title: str, message: str, config: GlobalConfig):
     # 发送 Telegram 通知
     send_telegram(message, config)
     
-    # 发送 Bark 通知（将 HTML 格式转为纯文本）
-    plain_message = re.sub(r'<[^>]+>', '', message)  # 移除 HTML 标签
+    # 发送 Bark 通知（将 HTML 格式转为纯文本并还原转义字符）
+    plain_message = html.unescape(re.sub(r'<[^>]+>', '', message))  # 移除 HTML 标签
     send_bark(title, plain_message, config)
 
 
@@ -1231,22 +1230,24 @@ def main():
 
     for result in all_results:
         email = result['email']
+        safe_email = html.escape(str(email))
         logger.info(f"\n账号: {email}")
 
         if not result['success']:
             error_type = result.get('error_type', 'exception')
             error_msg = result.get('error', '未知错误')
+            safe_error = html.escape(str(error_msg))
             logger.error(f"  ❌ 处理失败: {error_msg}")
 
             # ① 登录失败 → 通知
             if error_type == 'login':
                 notify_parts.append(
-                    f"<b>📧 {email}</b>\n  ❌ 登录处理失败: {error_msg}"
+                    f"<b>📧 {safe_email}</b>\n  ❌ 登录处理失败: {safe_error}"
                 )
             # ② 其他异常 → 通知
             elif error_type == 'exception':
                 notify_parts.append(
-                    f"<b>📧 {email}</b>\n  ❌ 处理异常: {error_msg}"
+                    f"<b>📧 {safe_email}</b>\n  ❌ 处理异常: {safe_error}"
                 )
             continue
 
@@ -1255,9 +1256,10 @@ def main():
 
         # ③ 获取服务器信息失败 → 通知
         if result.get('error_type') == 'get_servers':
-            logger.warning(f"  ⚠️ {result.get('error')}")
+            error_msg = result.get('error', '')
+            logger.warning(f"  ⚠️ {error_msg}")
             notify_parts.append(
-                f"<b>📧 {email}</b>\n  ⚠️ 获取服务器信息失败: {result.get('error')}"
+                f"<b>📧 {safe_email}</b>\n  ⚠️ 获取服务器信息失败: {html.escape(str(error_msg))}"
             )
             continue
 
@@ -1267,10 +1269,10 @@ def main():
             renew_lines = []
             for rr in renew_results:
                 logger.info(f"    {rr['message']}")
-                renew_lines.append(f"  {rr['message']}")
+                renew_lines.append(f"  {html.escape(str(rr['message']))}")
             # ④ 有续期操作（不管成功失败）→ 通知
             notify_parts.append(
-                f"<b>📧 {email}</b>\n" + "\n".join(renew_lines)
+                f"<b>📧 {safe_email}</b>\n" + "\n".join(renew_lines)
             )
         else:
             # ⑤ 无需续期 → 仅记录日志，不发通知
@@ -1290,6 +1292,8 @@ def main():
     logger.info("\n" + "=" * 60)
     logger.info("执行完成")
     logger.info("=" * 60)
+    if all_results and not any(r.get('success') for r in all_results):
+        sys.exit(1)
     sys.exit(0)
 
 

@@ -18,7 +18,7 @@ SERVICE_NAME="euserv-renew"
 COMPOSE_FILE="${INSTALL_DIR}/docker-compose.yml"
 COMMAND_LINK="/usr/local/bin/dj"
 MODE_FILE="${INSTALL_DIR}/.run_mode"
-GITHUB_REPO="https://raw.githubusercontent.com/dufei511/euserv_py/dev"
+GITHUB_REPO="https://raw.githubusercontent.com/dufei511/euserv_py/main"
 
 PYTHON_TARGET="3.12"
 PYTHON_BIN_NAME="python3.12"
@@ -45,7 +45,7 @@ set_run_mode() {
 
 create_directories() {
     print_info "创建项目目录..."
-    mkdir -p ${INSTALL_DIR}/{logs,config}
+    mkdir -p ${INSTALL_DIR}/{logs,config,cookies}
     print_success "目录创建完成"
 }
 
@@ -70,6 +70,7 @@ python-dotenv
 ddddocr
 pillow
 imap-tools
+numpy
 EOF
     fi
 }
@@ -216,11 +217,12 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: euserv-renew
-    restart: unless-stopped
+    restart: "no"
     env_file:
       - config.env
     volumes:
       - ./logs:/app/logs
+      - ./cookies:/app/cookies
       - ./config.env:/app/config.env:ro
       - ./euser_renew.py:/app/euser_renew.py:ro
     environment:
@@ -234,6 +236,16 @@ EOF
     print_success "docker-compose配置创建完成"
 }
 
+get_compose_cmd() {
+    if docker compose version &>/dev/null 2>&1; then
+        echo "$(command -v docker) compose"
+    elif command -v docker-compose &>/dev/null 2>&1; then
+        command -v docker-compose
+    else
+        echo "/usr/local/bin/docker-compose"
+    fi
+}
+
 install_docker() {
     print_info "安装Docker环境..."
     if ! command -v docker &> /dev/null; then
@@ -245,7 +257,7 @@ install_docker() {
     else
         print_success "Docker已安装"
     fi
-    if ! command -v docker-compose &> /dev/null; then
+    if ! docker compose version &> /dev/null && ! command -v docker-compose &> /dev/null; then
         print_info "Docker Compose未安装，正在安装..."
         curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" \
             -o /usr/local/bin/docker-compose
@@ -346,6 +358,10 @@ get_python_path() {
 
 setup_docker_cron() {
     local run_hour=$1
+    local compose_cmd
+    compose_cmd=$(get_compose_cmd)
+    print_info "首次构建 Docker 镜像..."
+    (cd ${INSTALL_DIR} && ${compose_cmd} -f ${COMPOSE_FILE} build)
     cat > /etc/systemd/system/${SERVICE_NAME}.service <<EOF
 [Unit]
 Description=EUserv Auto Renew Service (Docker)
@@ -355,7 +371,7 @@ Requires=docker.service
 [Service]
 Type=oneshot
 WorkingDirectory=${INSTALL_DIR}
-ExecStart=/usr/local/bin/docker-compose -f ${COMPOSE_FILE} up --build
+ExecStart=${compose_cmd} -f ${COMPOSE_FILE} run --rm euserv-renew
 StandardOutput=journal
 StandardError=journal
 
@@ -441,6 +457,15 @@ print_error()   { echo -e "${RED}[ERROR]${NC} $1"; }
 
 get_run_mode() { [ -f "${MODE_FILE}" ] && cat ${MODE_FILE} || echo "unknown"; }
 get_python_path() { command -v ${PYTHON_BIN} 2>/dev/null || echo "/usr/bin/${PYTHON_BIN}"; }
+get_compose_cmd() {
+    if docker compose version &>/dev/null 2>&1; then
+        echo "$(command -v docker) compose"
+    elif command -v docker-compose &>/dev/null 2>&1; then
+        command -v docker-compose
+    else
+        echo "/usr/local/bin/docker-compose"
+    fi
+}
 
 # 统计配置文件中的账号数
 # 规则：账号1=无后缀(EUSERV_EMAIL)，账号N=后缀N(EUSERV_EMAILN)
@@ -571,9 +596,10 @@ show_logs() {
 run_now() {
     echo ""
     local mode=$(get_run_mode)
+    local compose_cmd=$(get_compose_cmd)
     if [ "$mode" == "docker" ]; then
         echo "===== 立即执行续期任务 (Docker模式) ====="
-        cd ${INSTALL_DIR} && docker-compose up --build
+        cd ${INSTALL_DIR} && ${compose_cmd} run --rm euserv-renew
     elif [ "$mode" == "python" ]; then
         echo "===== 立即执行续期任务 (Python模式) ====="
         systemctl start euserv-renew.service
@@ -587,9 +613,11 @@ run_now() {
 restart_service() {
     echo ""
     local mode=$(get_run_mode)
+    local compose_cmd=$(get_compose_cmd)
     if [ "$mode" == "docker" ]; then
-        cd ${INSTALL_DIR}; docker-compose down; docker-compose up -d --build
-        print_success "Docker服务已重启"
+        cd ${INSTALL_DIR}; ${compose_cmd} down; ${compose_cmd} build
+        systemctl restart euserv-renew.timer
+        print_success "Docker服务及定时器已重启"
     elif [ "$mode" == "python" ]; then
         systemctl restart euserv-renew.timer
         print_success "Python定时服务已重启"
@@ -775,14 +803,15 @@ update_script() {
         cp ${INSTALL_DIR}/euser_renew.py \
            ${INSTALL_DIR}/euser_renew.py.bak.$(date +%Y%m%d_%H%M%S)
 
-    if curl -fsSL https://raw.githubusercontent.com/dufei511/euserv_py/dev/euser_renew.py \
+    if curl -fsSL https://raw.githubusercontent.com/dufei511/euserv_py/main/euser_renew.py \
            -o ${INSTALL_DIR}/euser_renew.py.new; then
         mv ${INSTALL_DIR}/euser_renew.py.new ${INSTALL_DIR}/euser_renew.py
         chmod +x ${INSTALL_DIR}/euser_renew.py
         print_success "脚本更新成功"
-        curl -fsSL https://raw.githubusercontent.com/dufei511/euserv_py/dev/requirements.txt \
+        curl -fsSL https://raw.githubusercontent.com/dufei511/euserv_py/main/requirements.txt \
             -o ${INSTALL_DIR}/requirements.txt 2>/dev/null && print_success "requirements.txt 更新成功"
         local mode=$(get_run_mode)
+        local compose_cmd=$(get_compose_cmd)
         if [ "$mode" == "python" ]; then
             local py_path=$(get_python_path)
             ${py_path} -m pip install -q -r ${INSTALL_DIR}/requirements.txt \
@@ -791,7 +820,8 @@ update_script() {
         read -p "是否立即重启服务? (Y/n): " r
         if [[ $r != "n" && $r != "N" ]]; then
             if [ "$mode" == "docker" ]; then
-                cd ${INSTALL_DIR}; docker-compose down; docker-compose up --build -d
+                cd ${INSTALL_DIR}; ${compose_cmd} down; ${compose_cmd} build
+                systemctl restart euserv-renew.timer
             else
                 systemctl restart euserv-renew.timer
             fi
@@ -818,14 +848,16 @@ switch_mode() {
             if ! command -v docker &>/dev/null; then
                 curl -fsSL https://get.docker.com | bash; systemctl enable docker; systemctl start docker
             fi
-            if ! command -v docker-compose &>/dev/null; then
+            if ! docker compose version &>/dev/null && ! command -v docker-compose &>/dev/null; then
                 curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" \
                     -o /usr/local/bin/docker-compose; chmod +x /usr/local/bin/docker-compose
             fi
+            local compose_cmd=$(get_compose_cmd)
             systemctl stop euserv-renew.timer 2>/dev/null; systemctl stop euserv-renew.service 2>/dev/null
             local run_hour
             run_hour=$(grep "OnCalendar=" /etc/systemd/system/euserv-renew.timer 2>/dev/null \
                 | sed 's/.*\*-\*-\* \([0-9]*\):00:00/\1/' || echo "3")
+            mkdir -p ${INSTALL_DIR}/{logs,config,cookies}
             cd ${INSTALL_DIR}
             cat > Dockerfile <<'DOCKERFILE'
 FROM python:3.12-slim
@@ -846,18 +878,23 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: euserv-renew
-    restart: unless-stopped
+    restart: "no"
     env_file:
       - config.env
     volumes:
       - ./logs:/app/logs
+      - ./cookies:/app/cookies
       - ./config.env:/app/config.env:ro
       - ./euser_renew.py:/app/euser_renew.py:ro
     environment:
       - TZ=Asia/Shanghai
+      - RUN_HOUR=${run_hour}
     security_opt:
       - no-new-privileges:true
+    labels:
+      - "euserv.schedule=${run_hour}"
 COMPOSE
+            ${compose_cmd} -f ${INSTALL_DIR}/docker-compose.yml build
             cat > /etc/systemd/system/euserv-renew.service <<SERVICE
 [Unit]
 Description=EUserv Auto Renew Service (Docker)
@@ -866,7 +903,7 @@ Requires=docker.service
 [Service]
 Type=oneshot
 WorkingDirectory=${INSTALL_DIR}
-ExecStart=/usr/local/bin/docker-compose -f ${INSTALL_DIR}/docker-compose.yml up --build
+ExecStart=${compose_cmd} -f ${INSTALL_DIR}/docker-compose.yml run --rm euserv-renew
 StandardOutput=journal
 StandardError=journal
 [Install]
@@ -877,7 +914,8 @@ SERVICE
             ;;
         2)
             [ "$current_mode" == "python" ] && echo "当前已是Python模式" && sleep 2 && show_menu && return
-            cd ${INSTALL_DIR}; docker-compose down -v 2>/dev/null
+            local compose_cmd=$(get_compose_cmd)
+            cd ${INSTALL_DIR}; ${compose_cmd} down -v 2>/dev/null
             if ! command -v ${PYTHON_BIN} &>/dev/null; then
                 apt-get update -qq
                 . /etc/os-release 2>/dev/null
@@ -934,10 +972,11 @@ uninstall() {
     echo ""
     read -p "确定要卸载? (y/N): " confirm
     if [[ $confirm == "y" || $confirm == "Y" ]]; then
+        local compose_cmd=$(get_compose_cmd)
         systemctl stop euserv-renew.timer 2>/dev/null
         systemctl disable euserv-renew.timer 2>/dev/null
         systemctl stop euserv-renew.service 2>/dev/null
-        [ -f "${INSTALL_DIR}/docker-compose.yml" ] && cd ${INSTALL_DIR} && docker-compose down -v 2>/dev/null
+        [ -f "${INSTALL_DIR}/docker-compose.yml" ] && cd ${INSTALL_DIR} && ${compose_cmd} down -v 2>/dev/null
         rm -f /etc/systemd/system/euserv-renew.{service,timer}
         systemctl daemon-reload
         rm -rf ${INSTALL_DIR}
@@ -1019,7 +1058,9 @@ install() {
     read -p "是否立即测试运行? (y/N): " test_now
     if [[ $test_now == "y" || $test_now == "Y" ]]; then
         if [ "$run_mode" == "docker" ]; then
-            cd ${INSTALL_DIR} && docker-compose up --build
+            local compose_cmd
+            compose_cmd=$(get_compose_cmd)
+            cd ${INSTALL_DIR} && ${compose_cmd} run --rm euserv-renew
         else
             systemctl start euserv-renew.service
             sleep 3

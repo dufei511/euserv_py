@@ -9,6 +9,7 @@
 使用以下命令进行安装。脚本执行后，终端输入 `dj` 即可唤起管理菜单。
 
 ```bash
-wget [https://raw.githubusercontent.com/dufei511/euserv_py/dev/install.sh](https://raw.githubusercontent.com/dufei511/euserv_py/dev/install.sh) -O euserv_install.sh
+wget https://raw.githubusercontent.com/dufei511/euserv_py/main/install.sh -O euserv_install.sh
 chmod +x euserv_install.sh
 ./euserv_install.sh install
+```

@@ -37,7 +37,8 @@
 | :--- | :---: | :--- |
 | `EUSERV_EMAIL` | **是** | Euserv 登录邮箱。多账号请配置 `EUSERV_EMAIL2` 等。 |
 | `EUSERV_PASSWORD` | **是** | Euserv 登录密码。多账号请配置 `EUSERV_PASSWORD2` 等。 |
-| `EMAIL_PASS` | **是** | 邮箱应用专用密码（需开启 IMAP）。多账号配置 `EMAIL_PASS2` 等。 |
+| `EMAIL_PIN` | 否 | 接收 PIN 码的邮箱（未配置时默认使用登录邮箱）。多账号配置 `EMAIL_PIN2` 等。 |
+| `EMAIL_PASS` | **是** | 接收 PIN 码邮箱的应用专用密码（需开启 IMAP）。多账号配置 `EMAIL_PASS2` 等。 |
 | `TG_BOT_TOKEN` | 否 | Telegram Bot Token。 |
 | `TG_CHAT_ID` | 否 | Telegram 用户 ID。 |
 | `BARK_URL` | 否 | iOS Bark 推送地址。例如：`https://api.day.app/your_key/` |
